@@ -1,5 +1,6 @@
 import os
-import httpx
+import json
+import boto3
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -32,14 +33,26 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Config from environment variables
 # ---------------------------------------------------------------------------
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL   = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash-002")
-SYSTEM_PROMPT  = os.environ.get("SYSTEM_PROMPT", (
+AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+MODEL_ID = os.environ.get("MODEL_ID", "us.amazon.nova-lite-v1:0")
+SYSTEM_PROMPT = os.environ.get("SYSTEM_PROMPT", (
     "You are a helpful AI assistant on Ganeshan Arumuganainar's portfolio website. "
     "Ganeshan is an AI Engineer specializing in LLMs, RAG systems, and Cloud AI. "
     "Answer questions about his work, skills, and projects helpfully and concisely. "
     "Keep responses short and friendly."
 ))
+
+# Initialize Bedrock client
+bedrock_runtime = None
+if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+    bedrock_runtime = boto3.client(
+        service_name="bedrock-runtime",
+        region_name=AWS_REGION,
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +60,7 @@ SYSTEM_PROMPT  = os.environ.get("SYSTEM_PROMPT", (
 # ---------------------------------------------------------------------------
 @app.get("/")
 async def health():
-    return {"status": "ok", "model": GEMINI_MODEL}
+    return {"status": "ok", "model": MODEL_ID, "region": AWS_REGION}
 
 
 # ---------------------------------------------------------------------------
@@ -56,8 +69,8 @@ async def health():
 @app.post("/chat")
 @limiter.limit("10/minute;100/day")
 async def chat(request: Request):
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="API key not configured")
+    if not bedrock_runtime:
+        raise HTTPException(status_code=500, detail="AWS credentials not configured")
 
     try:
         body = await request.json()
@@ -68,34 +81,41 @@ async def chat(request: Request):
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
 
-    endpoint = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-    )
-
-    payload: dict = {
-        "contents": [{"role": "user", "parts": [{"text": message}]}],
+    # Prepare the request for Amazon Nova
+    messages = [{"role": "user", "content": [{"text": message}]}]
+    
+    payload = {
+        "messages": messages,
+        "inferenceConfig": {
+            "max_new_tokens": 512,
+            "temperature": 0.7,
+            "top_p": 0.9
+        }
     }
+    
+    # Add system prompt if configured
     if SYSTEM_PROMPT:
-        payload["systemInstruction"] = {"parts": [{"text": SYSTEM_PROMPT}]}
+        payload["system"] = [{"text": SYSTEM_PROMPT}]
 
     try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            res = await client.post(endpoint, json=payload)
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Upstream request timed out")
+        response = bedrock_runtime.invoke_model(
+            modelId=MODEL_ID,
+            body=json.dumps(payload),
+            contentType="application/json",
+            accept="application/json"
+        )
+        
+        response_body = json.loads(response["body"].read())
+        
+        # Extract text from Nova response
+        reply = ""
+        if "output" in response_body and "message" in response_body["output"]:
+            content = response_body["output"]["message"].get("content", [])
+            for item in content:
+                if "text" in item:
+                    reply += item["text"]
+        
+        return JSONResponse({"reply": reply.strip() or "(no content)"})
+        
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Upstream fetch failed: {str(e)}")
-
-    if not res.is_success:
-        raise HTTPException(status_code=502, detail=f"Gemini error: {res.status_code}")
-
-    data = res.json()
-    parts = (
-        data.get("candidates", [{}])[0]
-            .get("content", {})
-            .get("parts", [])
-    )
-    reply = "\n".join(p.get("text", "") for p in parts if p.get("text")).strip()
-
-    return JSONResponse({"reply": reply or "(no content)"})
+        raise HTTPException(status_code=502, detail=f"Bedrock API error: {str(e)}")
