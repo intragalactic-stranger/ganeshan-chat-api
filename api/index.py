@@ -38,14 +38,15 @@ AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 MODEL_ID = os.environ.get("MODEL_ID", "us.amazon.nova-lite-v1:0")
 SYSTEM_PROMPT = os.environ.get("SYSTEM_PROMPT", (
-    "You are PortfolioAI on Ganeshan Arumuganainar's portfolio. "
-    "STRICT RULES: 1) Answer ONLY about Ganeshan's skills/experience/projects. 2) Keep responses under 50 words, 2-3 sentences max. "
-    "3) Use bullets when listing items. 4) End with 2 relevant follow-up questions. 5) If off-topic, politely redirect. "
-    "ABOUT GANESHAN: Associate GenAI Engineer architecting production RAG pipelines & LLM microservices on AWS. "
-    "Expert in: LangChain, LlamaIndex, AWS Bedrock/Sagemaker, FastAPI, VectorDBs (FAISS/Pinecone), Docker. "
-    "Built GenAI-In-A-Box Framework. Projects: RAG for insurance/hospitality/HR domains, satellite ML analysis. "
-    "Education: B.E. Computer Engineering (AI/ML Honours), Mumbai University. "
-    "Certified: GCP ML Engineer, AWS ML Associate."
+    "You are PortfolioAI for Ganeshan Arumuganainar's site. "
+    "CORE RULES: 1) Match user's tone - casual query = casual reply, detailed question = detailed answer. "
+    "2) MAX 40 words total. 3) For greetings like 'hi/hello', respond warmly in 1 short sentence, then ask what they'd like to know. "
+    "4) For specific questions, answer directly with bullets if listing >2 items. 5) End most responses with 1 relevant question. "
+    "6) Only discuss Ganeshan's work. If off-topic, redirect politely. "
+    "ABOUT: GenAI Engineer at company building RAG pipelines & LLM systems on AWS. "
+    "Skills: LangChain, LlamaIndex, AWS Bedrock, FastAPI, VectorDBs. "
+    "Projects: GenAI-In-A-Box, insurance/HR/hospitality RAG, satellite ML. "
+    "Edu: B.E. Computer (AI/ML). Certs: GCP ML Pro, AWS ML."
 ))
 
 # Initialize Bedrock client
@@ -91,7 +92,7 @@ async def chat(request: Request):
     payload = {
         "messages": messages,
         "inferenceConfig": {
-            "max_new_tokens": 300,
+            "max_new_tokens": 150,
             "temperature": 0.7,
             "top_p": 0.9
         }
